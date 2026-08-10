@@ -50,6 +50,11 @@ export class AdminConfigError extends Error {
  *     billing.ts: recording clickwrap acceptance on org_billing, where no
  *     user session holds a write verb by design, migration 022. The action
  *     proves the viewer is an org admin before the write)
+ *   - src/lib/azure/credential-vault.ts  (reads and decrypts an Azure
+ *     connection's service principal secret at the moment of the daily cost
+ *     pull; the ciphertext column is withheld from the authenticated SELECT
+ *     grant, migration 026, so only the service role can read it, and the
+ *     plaintext lives only in that request scope, ruling 2/3)
  *   - future cron route handlers and migration tooling, added to this list
  *     when they exist
  *

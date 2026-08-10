@@ -11,6 +11,39 @@ added the CI migration drift guard. See docs/DECISIONS.md for all three.
 
 ---
 
+## Cloud costs: a multi tenant OAuth connect button instead of the pasted service principal
+
+**Raised 2026-08-10** while building Azure cost monitoring (BRD F23). The v1
+connect flow is honest but manual: the admin runs one Azure CLI command that
+mints a Cost Management Reader service principal and pastes back three
+values. The upgrade is a "Connect Azure" button backed by a multi tenant
+Entra app registration: the admin signs in, consents, and Talvext receives
+delegated or app credentials without anyone handling a secret by hand.
+
+**Why not now.** A multi tenant app registration is a real operational
+commitment: a verified publisher domain, admin consent flows that differ by
+tenant policy, certificate credentials with rotation, and a Microsoft
+partner verification queue. None of that teaches anything the v1 flow does
+not, and the pasted flow keeps the buyer in full control of scope and
+revocation, which is the pitch.
+
+**What picking it up looks like.**
+
+1. **Register the multi tenant app** with a certificate credential, publisher
+   verified, requesting only Cost Management Reader consent.
+2. **Replace the wizard's paste form** with the consent redirect and store
+   the returned credential in the same vault row shape; the pull path does
+   not change.
+3. **Keep the CLI path** as the fallback for tenants whose policy blocks
+   third party consent, which is common in exactly the IT literate shops
+   Talvext sells to.
+
+**The cost of leaving it.** Some connect friction for the admin, roughly
+five careful minutes with a wizard that explains each step. No security
+cost: the pasted flow is narrower, not wider, than the OAuth one.
+
+---
+
 ## Process: the chat isolation CI flake, now cited, and the audit that nearly buried it
 
 **Raised 2026-07-30** at the portfolio close out. This entry records two
