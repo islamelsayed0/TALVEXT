@@ -8,6 +8,7 @@ import {
   type BillingPlan,
   type Entitlements,
 } from '@/lib/billing/entitlements'
+import { stripeIsTestMode } from '@/lib/billing/stripe'
 import { StatusText } from '@/components/status-mark'
 
 import { Card } from '../../_overview/ui'
@@ -411,9 +412,10 @@ export default async function BillingSettingsPage({
       ) : null}
 
       <p className="mt-[18px] text-[12px] text-quiet">
-        Billing runs in Stripe test mode while Talvext is prelaunch; no real
-        card is ever charged. BYOK chat stays free on every tier and is never
-        capped.
+        {stripeIsTestMode()
+          ? 'Billing runs in Stripe test mode while Talvext is prelaunch; no real card is ever charged. '
+          : ''}
+        BYOK chat stays free on every tier and is never capped.
       </p>
     </main>
   )
