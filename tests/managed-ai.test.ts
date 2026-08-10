@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   chatEntryMode,
-  MANAGED_PROVIDER,
-  platformApiKey,
+  platformConfig,
   resolveManagedAccess,
+  type PlatformProvider,
 } from '@/lib/billing/managed-ai'
+import { DEFAULT_MODELS, PLATFORM_MODELS } from '@/lib/chat/providers'
 import {
   callProviderOnce,
   ManagedCapReachedError,
@@ -34,54 +35,117 @@ afterEach(() => {
   getEntitlementsMock.mockReset()
 })
 
-describe('platformApiKey', () => {
-  it('is null when unset or blank, so the managed path fails closed', () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
-    expect(platformApiKey()).toBeNull()
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '   ')
-    expect(platformApiKey()).toBeNull()
+// The provider matrix: every configuration rule must hold identically for
+// both providers the platform key may run on.
+const MATRIX: Array<{ provider: PlatformProvider; keyVar: string; otherKeyVar: string }> = [
+  {
+    provider: 'anthropic',
+    keyVar: 'PLATFORM_ANTHROPIC_API_KEY',
+    otherKeyVar: 'PLATFORM_OPENAI_API_KEY',
+  },
+  {
+    provider: 'openai',
+    keyVar: 'PLATFORM_OPENAI_API_KEY',
+    otherKeyVar: 'PLATFORM_ANTHROPIC_API_KEY',
+  },
+]
+
+function clearPlatformEnv() {
+  vi.stubEnv('PLATFORM_AI_PROVIDER', '')
+  vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
+  vi.stubEnv('PLATFORM_OPENAI_API_KEY', '')
+}
+
+describe.each(MATRIX)('platformConfig ($provider)', ({ provider, keyVar, otherKeyVar }) => {
+  it('resolves the matching pair, key trimmed', () => {
+    clearPlatformEnv()
+    vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+    vi.stubEnv(keyVar, '  the-key  ')
+    expect(platformConfig()).toEqual({ provider, apiKey: 'the-key' })
   })
 
-  it('returns the configured key', () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', 'sk-ant-test')
-    expect(platformApiKey()).toBe('sk-ant-test')
+  it('is null when the matching key var is blank, whatever the other holds', () => {
+    clearPlatformEnv()
+    vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+    vi.stubEnv(otherKeyVar, 'the-wrong-key')
+    expect(platformConfig()).toBeNull()
+  })
+
+  it('is null when the provider is unset, even with this key present', () => {
+    clearPlatformEnv()
+    vi.stubEnv(keyVar, 'the-key')
+    expect(platformConfig()).toBeNull()
   })
 })
 
-describe('the managed path constants', () => {
-  it('runs on anthropic', () => {
-    expect(MANAGED_PROVIDER).toBe('anthropic')
+describe('platformConfig rejects what the engine cannot serve', () => {
+  it('an unrecognized provider is null, never a crash', () => {
+    clearPlatformEnv()
+    vi.stubEnv('PLATFORM_AI_PROVIDER', 'google')
+    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', 'the-key')
+    expect(platformConfig()).toBeNull()
   })
 })
 
-describe('the missing key degrade (platform key resilience)', () => {
-  it('an entitled org with no platform key is unavailable, never none', () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
+describe('the platform model table', () => {
+  it('is cheap tier for both providers, separate from the BYOK defaults', () => {
+    // Pinned literally: moving a managed model is a spend decision, made
+    // here deliberately, never inherited from a BYOK default change.
+    expect(PLATFORM_MODELS).toEqual({
+      anthropic: 'claude-haiku-4-5',
+      openai: 'gpt-4o-mini',
+    })
+    for (const provider of Object.keys(PLATFORM_MODELS) as PlatformProvider[]) {
+      expect(typeof DEFAULT_MODELS[provider]).toBe('string')
+    }
+  })
+})
+
+describe.each(MATRIX)(
+  'the missing key degrade, $provider (platform key resilience)',
+  ({ provider }) => {
+    it('an entitled org with the provider named but no key is unavailable, never none', () => {
+      clearPlatformEnv()
+      vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+      getEntitlementsMock.mockResolvedValue(entitled(300))
+      return expect(resolveManagedAccess('org_x')).resolves.toEqual({
+        mode: 'unavailable',
+      })
+    })
+
+    it('an unentitled org is none, whatever the pair situation', async () => {
+      clearPlatformEnv()
+      getEntitlementsMock.mockResolvedValue(entitled(0))
+      await expect(resolveManagedAccess('org_x')).resolves.toEqual({ mode: 'none' })
+      vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+      vi.stubEnv(MATRIX.find((m) => m.provider === provider)!.keyVar, 'the-key')
+      getEntitlementsMock.mockResolvedValue(entitled(0))
+      await expect(resolveManagedAccess('org_x')).resolves.toEqual({ mode: 'none' })
+    })
+
+    it('chatEntryMode surfaces unavailable as its own door', async () => {
+      clearPlatformEnv()
+      vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+      getEntitlementsMock.mockResolvedValue(entitled(300))
+      await expect(chatEntryMode('org_x', false)).resolves.toBe('unavailable')
+    })
+
+    it('BYOK is untouched: a key holding org never consults the platform side', async () => {
+      clearPlatformEnv()
+      vi.stubEnv('PLATFORM_AI_PROVIDER', provider)
+      await expect(chatEntryMode('org_x', true)).resolves.toBe('byok')
+      expect(getEntitlementsMock).not.toHaveBeenCalled()
+    })
+  },
+)
+
+describe('the missing key degrade with nothing configured at all', () => {
+  it('an entitled org is unavailable when both provider and keys are absent', () => {
+    clearPlatformEnv()
     getEntitlementsMock.mockResolvedValue(entitled(300))
     return expect(resolveManagedAccess('org_x')).resolves.toEqual({
       mode: 'unavailable',
     })
-  })
-
-  it('an unentitled org is none, whatever the key situation', async () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
-    getEntitlementsMock.mockResolvedValue(entitled(0))
-    await expect(resolveManagedAccess('org_x')).resolves.toEqual({ mode: 'none' })
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', 'sk-ant-test')
-    getEntitlementsMock.mockResolvedValue(entitled(0))
-    await expect(resolveManagedAccess('org_x')).resolves.toEqual({ mode: 'none' })
-  })
-
-  it('chatEntryMode surfaces unavailable as its own door', async () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
-    getEntitlementsMock.mockResolvedValue(entitled(300))
-    await expect(chatEntryMode('org_x', false)).resolves.toBe('unavailable')
-  })
-
-  it('BYOK is untouched: a key holding org never consults the platform side', async () => {
-    vi.stubEnv('PLATFORM_ANTHROPIC_API_KEY', '')
-    await expect(chatEntryMode('org_x', true)).resolves.toBe('byok')
-    expect(getEntitlementsMock).not.toHaveBeenCalled()
   })
 })
 

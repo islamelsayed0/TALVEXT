@@ -2,6 +2,7 @@ import 'server-only'
 
 import { logInfo, type LogDetail } from '@/lib/log'
 
+import type { PlatformProvider } from '@/lib/billing/managed-ai'
 import type { AiProvider } from '@/lib/db/types'
 import { AI_PROVIDER_LABELS } from './providers-meta'
 
@@ -46,6 +47,18 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
   anthropic: 'claude-haiku-4-5',
   openai: 'gpt-4o-mini',
   google: 'gemini-2.0-flash-lite',
+}
+
+/**
+ * Models the PLATFORM key answers on (the managed path), beside the BYOK
+ * defaults above so a price sensitive change edits one file. Cheap tier by
+ * default and deliberately its own table: this is the operator's money, and
+ * moving the managed tier must never move what a customer's own key pays
+ * for, or the reverse.
+ */
+export const PLATFORM_MODELS: Record<PlatformProvider, string> = {
+  anthropic: 'claude-haiku-4-5',
+  openai: 'gpt-4o-mini',
 }
 
 const PROVIDER_LABEL = AI_PROVIDER_LABELS

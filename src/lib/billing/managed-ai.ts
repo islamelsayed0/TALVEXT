@@ -2,7 +2,6 @@ import 'server-only'
 
 import { createAdminClient } from '@/lib/db/admin'
 import { currentAndPreviousMonth, DEFAULT_TIMEZONE } from '@/lib/db/usage'
-import type { AiProvider } from '@/lib/db/types'
 import { logError } from '@/lib/log'
 import { getEntitlements } from './entitlements'
 
@@ -28,14 +27,32 @@ import { getEntitlements } from './entitlements'
  * overshoot violates none of them.
  */
 
-/** The managed path runs on one provider, ours. BYOK keeps its three. */
-export const MANAGED_PROVIDER: AiProvider = 'anthropic'
+/** The providers the platform key may run on: a subset of what the engine
+ * speaks, chosen by the operator. BYOK keeps its three regardless. */
+export type PlatformProvider = 'anthropic' | 'openai'
 
-/** The platform key, server only, test account until the live gates pass.
- * Absent means the managed path is switched off operationally. */
-export function platformApiKey(): string | null {
-  const key = process.env.PLATFORM_ANTHROPIC_API_KEY
-  return key && key.trim() ? key : null
+const PLATFORM_KEY_VARS: Record<PlatformProvider, string> = {
+  anthropic: 'PLATFORM_ANTHROPIC_API_KEY',
+  openai: 'PLATFORM_OPENAI_API_KEY',
+}
+
+export type PlatformConfig = { provider: PlatformProvider; apiKey: string }
+
+/**
+ * The platform side's configuration, or null when it cannot serve. The env
+ * contract (RUNBOOK section 8, .env.example): PLATFORM_AI_PROVIDER names the
+ * provider, and the MATCHING key var carries the key. Exactly one configured
+ * pair is valid; the provider unset, unrecognized, or naming a provider
+ * whose key var is empty all resolve to null, which the callers turn into
+ * the honest unavailable degrade. A misconfiguration is never a boot
+ * failure and never a 500: entitled orgs get the ticket door either way.
+ */
+export function platformConfig(): PlatformConfig | null {
+  const provider = process.env.PLATFORM_AI_PROVIDER?.trim().toLowerCase()
+  if (provider !== 'anthropic' && provider !== 'openai') return null
+  const key = process.env[PLATFORM_KEY_VARS[provider]]
+  if (!key || !key.trim()) return null
+  return { provider, apiKey: key.trim() }
 }
 
 /** Logged once per process, the notifications email pattern: the layout
@@ -90,9 +107,10 @@ export async function resolveManagedAccess(
   const entitlements = await getEntitlements(clerkOrgId)
   if (entitlements.aiAnswersIncluded <= 0) return { mode: 'none' }
 
-  if (!platformApiKey()) {
-    // An org paid for managed answers the operator has not configured a key
-    // for. That is a platform failure worth a line, not a user error.
+  if (!platformConfig()) {
+    // An org paid for managed answers the operator has not configured a
+    // valid provider and key pair for. That is a platform failure worth a
+    // line, not a user error.
     if (!missingPlatformKeyLogged) {
       missingPlatformKeyLogged = true
       logError('chat.platform_key.not_configured', 'unavailable')
