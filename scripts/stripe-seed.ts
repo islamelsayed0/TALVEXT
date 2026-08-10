@@ -7,13 +7,18 @@
  * script is the source of truth and the dashboard is never hand edited into
  * a state this file cannot reproduce.
  *
- *   npm run stripe:seed
+ *   npm run stripe:seed            (test mode, the default)
+ *   npm run stripe:seed -- --live  (live mode, deliberate and loud)
  *
  * Reads STRIPE_SECRET_KEY from .env.local (via node --env-file-if-exists) or
- * the shell. TEST KEYS ONLY: the script refuses sk_live_/rk_live_ outright,
- * because live mode is a human switch behind the recorded gates in
- * docs/DECISIONS.md 2026-08-07 and a seed script must never be the thing
- * that touches a live account first.
+ * the shell. Test keys are the default and the safe path. A live key is
+ * refused UNLESS the --live flag states the intent explicitly, and the flag
+ * is refused unless the key is actually live: the flag and the key must
+ * agree, so neither a pasted wrong key nor a habitual command can touch the
+ * wrong account. The live gates (docs/DECISIONS.md 2026-08-07: clickwrap
+ * shipped, the TALVEXT statement descriptor set, the operator go ahead) are
+ * process, not code; passing --live is the operator asserting they have
+ * passed.
  *
  * What is deliberately NOT here: the Free tier (no money, no Stripe object),
  * the Custom tier (a mailto, no price shown), annual prices, coupons,
@@ -77,13 +82,35 @@ async function main(): Promise<void> {
     )
     process.exit(1)
   }
-  if (!/^(sk|rk)_test_/.test(key)) {
+  const liveKey = /^(sk|rk)_live_/.test(key)
+  const testKey = /^(sk|rk)_test_/.test(key)
+  const liveFlag = process.argv.includes('--live')
+  if (!liveKey && !testKey) {
+    console.error('STRIPE_SECRET_KEY is neither a test nor a live secret key.')
+    process.exit(1)
+  }
+  if (liveKey && !liveFlag) {
     console.error(
-      'Refusing to run: STRIPE_SECRET_KEY is not a test mode key. This seed ' +
-        'only ever touches a test account. Live mode is a human switch behind ' +
-        'the gates recorded in docs/DECISIONS.md (2026-08-07).',
+      'Refusing to run: STRIPE_SECRET_KEY is a live key and --live was not ' +
+        'passed. Live mode is a human switch behind the gates recorded in ' +
+        'docs/DECISIONS.md (2026-08-07); if they have passed, state the ' +
+        'intent explicitly: npm run stripe:seed -- --live',
     )
     process.exit(1)
+  }
+  if (testKey && liveFlag) {
+    console.error(
+      'Refusing to run: --live was passed but STRIPE_SECRET_KEY is a test ' +
+        'key. The flag and the key must agree; check which key .env.local ' +
+        'holds.',
+    )
+    process.exit(1)
+  }
+  if (liveKey) {
+    console.log(
+      'LIVE MODE: creating real products and prices on the live Stripe ' +
+        'account. Customers will be able to buy these.',
+    )
   }
 
   const stripe = new Stripe(key)
@@ -138,7 +165,11 @@ async function main(): Promise<void> {
   const portal = await ensurePortalConfiguration(stripe)
   console.log(`Portal configuration: ${portal.id}`)
 
-  console.log('Catalog check complete. Test mode only; nothing here touches live.')
+  console.log(
+    liveKey
+      ? 'Catalog check complete against the LIVE account.'
+      : 'Catalog check complete. Test mode; nothing here touched live.',
+  )
 }
 
 main().catch((err: unknown) => {
