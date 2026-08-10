@@ -72,6 +72,7 @@ export type OrgBillingRow = {
   org_limit: number
   monitor_limit: number | null
   current_period_end: string | null
+  cancel_at_period_end: boolean
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   clickwrap_accepted_at: string | null
@@ -90,6 +91,9 @@ export type Entitlements = {
   aiAddon: boolean
   dailyDigest: boolean
   currentPeriodEnd: string | null
+  /** The subscription is scheduled to end at currentPeriodEnd: access
+   * continues until then, nothing more is charged, the screen says so. */
+  cancelAtPeriodEnd: boolean
   /** Present once the org has ever checked out; what "Manage billing" needs. */
   stripeCustomerId: string | null
   /** Present while a subscription exists; what the add on toggle edits. */
@@ -108,6 +112,7 @@ export const FREE_ENTITLEMENTS: Entitlements = {
   aiAddon: false,
   dailyDigest: PLAN_LIMITS.free.dailyDigest,
   currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
   stripeCustomerId: null,
   stripeSubscriptionId: null,
   clickwrapAcceptedAt: null,
@@ -170,6 +175,7 @@ export function resolveEntitlements(row: OrgBillingRow | null | undefined): Enti
     aiAddon: row.ai_addon,
     dailyDigest: PLAN_LIMITS[row.plan].dailyDigest,
     currentPeriodEnd: row.current_period_end,
+    cancelAtPeriodEnd: row.cancel_at_period_end,
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
     clickwrapAcceptedAt: row.clickwrap_accepted_at,

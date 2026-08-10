@@ -52,6 +52,7 @@ export type LogEvent =
   // Stripe error text: it can quote request details.
   | 'billing.checkout.failed'
   | 'billing.portal.failed'
+  | 'billing.cancel.failed'
   | 'billing.addon.failed'
   // The five minute sweep, its steps, and the daily digest that rides it.
   | 'cron.sweep.complete'

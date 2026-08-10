@@ -17,7 +17,7 @@ import { FormError } from '../../tickets/ui'
 import { SettingsNav } from '../nav'
 import { openPortalAction, startCheckoutAction } from './actions'
 import { PendingRefresh } from './pending-refresh'
-import { Eyebrow, PriceMark } from './ui'
+import { ADDON_DOLLARS, Eyebrow, PLAN_DOLLARS, PLAN_NAMES, PriceMark } from './ui'
 
 export const metadata = { title: 'Settings — Talvext' }
 
@@ -33,13 +33,6 @@ export const metadata = { title: 'Settings — Talvext' }
  * v1; owner activation is recorded as deferred in docs/DECISIONS.md
  * 2026-08-07 (PR 2 note).
  */
-
-const PLAN_NAMES: Record<BillingPlan, string> = {
-  free: 'Free',
-  basic: 'Basic',
-  pro: 'Pro',
-  business: 'Business',
-}
 
 /** What each plan includes, the frozen pricing said out loud. */
 const PLAN_INCLUDES: Record<BillingPlan, string[]> = {
@@ -64,15 +57,6 @@ const PLAN_INCLUDES: Record<BillingPlan, string[]> = {
     'Manage every client or location from one account',
   ],
 }
-
-/** Display prices, the frozen pricing's numbers as numbers. */
-const PLAN_DOLLARS: Record<'basic' | 'pro' | 'business', number> = {
-  basic: 39,
-  pro: 79,
-  business: 199,
-}
-
-const ADDON_DOLLARS = 15
 
 const TIER_CARDS: Array<{
   plan: 'basic' | 'pro' | 'business'
@@ -116,6 +100,9 @@ function planStatus(entitlements: Entitlements) {
   if (entitlements.status === 'canceled') {
     return <StatusText tone="paused" label="Subscription ended" />
   }
+  if (entitlements.cancelAtPeriodEnd && entitlements.plan !== 'free') {
+    return <StatusText tone="paused" label="Ending" />
+  }
   if (entitlements.plan !== 'free') {
     return <StatusText tone="up" label="Active" />
   }
@@ -146,6 +133,14 @@ export default async function BillingSettingsPage({
   const awaitingAddon =
     (addon === 'adding' && !entitlements.aiAddon) ||
     (addon === 'removing' && entitlements.aiAddon)
+  // And for the cancellation schedule, the same honesty: the flag in the row
+  // is the truth, the redirect only says what was asked for.
+  const ending = typeof params.ending === 'string' ? params.ending : undefined
+  const awaitingEnding =
+    (ending === 'scheduled' && !entitlements.cancelAtPeriodEnd) ||
+    (ending === 'resumed' && entitlements.cancelAtPeriodEnd)
+  const endingSettled =
+    (ending === 'scheduled' || ending === 'resumed') && !awaitingEnding
   const addonSettled =
     (addon === 'adding' && entitlements.aiAddon) ||
     (addon === 'removing' && !entitlements.aiAddon)
@@ -233,10 +228,32 @@ export default async function BillingSettingsPage({
         </ul>
         {entitlements.currentPeriodEnd && entitlements.status === 'active' ? (
           <p className="mt-3.5 border-t border-divider pt-3 text-[12.5px] text-quiet">
-            Renews {formatUtc(entitlements.currentPeriodEnd)}.
+            {entitlements.cancelAtPeriodEnd
+              ? `Ends ${formatUtc(entitlements.currentPeriodEnd)}; nothing more will be charged.`
+              : `Renews ${formatUtc(entitlements.currentPeriodEnd)}.`}
           </p>
         ) : null}
       </Card>
+
+      {entitlements.cancelAtPeriodEnd && onPaidPlan ? (
+        <Card className="mt-[18px] px-[22px] py-4">
+          <p className="text-sm text-foreground">
+            Your subscription is scheduled to end
+            {entitlements.currentPeriodEnd
+              ? ` on ${formatUtc(entitlements.currentPeriodEnd)}`
+              : ''}
+            . Everything keeps working until then, and this organization then
+            moves to the Free tier. Changed your mind?{' '}
+            <Link
+              href="/dashboard/settings/billing/cancel?op=resume"
+              className="text-link underline hover:text-foreground"
+            >
+              Keep your subscription
+            </Link>
+            .
+          </p>
+        </Card>
+      ) : null}
 
       {entitlements.status === 'past_due' ? (
         <Card className="mt-[18px] px-[22px] py-4">
@@ -278,6 +295,34 @@ export default async function BillingSettingsPage({
             {addon === 'adding'
               ? 'The AI Chat add on is active: 300 managed AI answers a month.'
               : 'The AI Chat add on is removed. BYOK chat keeps working as always.'}
+          </p>
+        </Card>
+      ) : null}
+
+      {awaitingEnding ? (
+        <Card className="mt-[18px] px-[22px] py-4">
+          <StatusText
+            tone="pending"
+            label={
+              ending === 'scheduled'
+                ? 'Scheduling the cancellation'
+                : 'Resuming your subscription'
+            }
+          />
+          <p className="mt-1.5 text-[12.5px] text-quiet">
+            Stripe is confirming the change to us now. This page checks again
+            every few seconds.
+          </p>
+          <PendingRefresh />
+        </Card>
+      ) : null}
+
+      {endingSettled ? (
+        <Card className="mt-[18px] px-[22px] py-4">
+          <p className="text-sm text-foreground">
+            {ending === 'scheduled'
+              ? 'Your cancellation is scheduled. Everything keeps working until the period ends, and nothing more will be charged.'
+              : 'Your subscription continues, exactly as before.'}
           </p>
         </Card>
       ) : null}
@@ -408,6 +453,19 @@ export default async function BillingSettingsPage({
               Manage billing
             </button>
           </form>
+          {onPaidPlan && !entitlements.cancelAtPeriodEnd ? (
+            <p className="mt-3 border-t border-divider pt-3 text-[12.5px] text-quiet">
+              Done with the plan?{' '}
+              <Link
+                href="/dashboard/settings/billing/cancel?op=cancel"
+                className="text-link underline hover:text-foreground"
+              >
+                Cancel your subscription
+              </Link>{' '}
+              — access continues to the end of the period you paid for, and
+              nothing more is charged.
+            </p>
+          ) : null}
         </Card>
       ) : null}
 
