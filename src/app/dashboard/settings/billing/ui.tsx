@@ -14,6 +14,24 @@
  * color or motion.
  */
 
+import type { BillingPlan } from '@/lib/billing/entitlements'
+
+export const PLAN_NAMES: Record<BillingPlan, string> = {
+  free: 'Free',
+  basic: 'Basic',
+  pro: 'Pro',
+  business: 'Business',
+}
+
+/** Display prices, the frozen pricing's numbers as numbers. */
+export const PLAN_DOLLARS: Record<'basic' | 'pro' | 'business', number> = {
+  basic: 39,
+  pro: 79,
+  business: 199,
+}
+
+export const ADDON_DOLLARS = 15
+
 const PRICE_SIZES = {
   lg: { dollar: 'text-[14px]', amount: 'text-[28px]' },
   md: { dollar: 'text-[12px]', amount: 'text-[20px]' },

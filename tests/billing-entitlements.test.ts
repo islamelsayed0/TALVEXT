@@ -23,6 +23,7 @@ function row(overrides: Partial<OrgBillingRow>): OrgBillingRow {
     org_limit: 1,
     monitor_limit: 15,
     current_period_end: '2026-09-07T00:00:00Z',
+    cancel_at_period_end: false,
     stripe_customer_id: 'cus_test',
     stripe_subscription_id: 'sub_test',
     clickwrap_accepted_at: '2026-08-07T12:00:00Z',
@@ -142,6 +143,17 @@ describe('status rules', () => {
     expect(e.aiAnswersIncluded).toBe(0)
     expect(e.dailyDigest).toBe(false)
     expect(e.stripeCustomerId).toBe('cus_test')
+  })
+
+  it('a scheduled ending passes through: access holds, the screen can say so', () => {
+    // Migration 025: cancel at period end is a stored fact, not a status.
+    // The plan stays fully entitled until the period turns; what changes is
+    // what the screen says and what happens next.
+    const e = resolveEntitlements(row({ cancel_at_period_end: true }))
+    expect(e.cancelAtPeriodEnd).toBe(true)
+    expect(e.plan).toBe('basic')
+    expect(e.monitorLimit).toBe(15)
+    expect(e.dailyDigest).toBe(true)
   })
 
   it('a hand shaped row with an unknown plan or status degrades to free, never up', () => {

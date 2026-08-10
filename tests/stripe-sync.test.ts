@@ -104,6 +104,16 @@ describe('subscriptionFacts', () => {
     const sub = subscription({ lookupKeys: [AI_ADDON_LOOKUP_KEY, 'talvext_basic_monthly'] })
     expect(subscriptionFacts(sub)?.plan).toBe('basic')
   })
+
+  it('carries a scheduled cancellation, and its absence, faithfully', () => {
+    const plain = subscription({ lookupKeys: ['talvext_basic_monthly'] })
+    expect(subscriptionFacts(plain)?.cancelAtPeriodEnd).toBe(false)
+    const ending = {
+      ...plain,
+      cancel_at_period_end: true,
+    } as unknown as Parameters<typeof subscriptionFacts>[0]
+    expect(subscriptionFacts(ending)?.cancelAtPeriodEnd).toBe(true)
+  })
 })
 
 describe('mapSubscriptionStatus', () => {

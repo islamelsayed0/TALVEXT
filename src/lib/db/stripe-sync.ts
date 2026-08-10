@@ -58,6 +58,9 @@ export type SubscriptionFacts = {
   orgLimit: number
   monitorLimit: number | null
   currentPeriodEnd: string | null
+  /** Scheduled to end when the period turns (migration 025): access
+   * continues, nothing more is charged, and the screen must say so. */
+  cancelAtPeriodEnd: boolean
 }
 
 /**
@@ -119,6 +122,7 @@ export function subscriptionFacts(sub: Stripe.Subscription): SubscriptionFacts |
     orgLimit: limits.orgLimit,
     monitorLimit: limits.monitorLimit,
     currentPeriodEnd: new Date(planItem.current_period_end * 1000).toISOString(),
+    cancelAtPeriodEnd: sub.cancel_at_period_end === true,
   }
 }
 
@@ -189,6 +193,7 @@ function entitlementColumns(facts: SubscriptionFacts) {
     org_limit: facts.orgLimit,
     monitor_limit: facts.monitorLimit,
     current_period_end: facts.currentPeriodEnd,
+    cancel_at_period_end: facts.cancelAtPeriodEnd,
   }
 }
 
@@ -318,6 +323,7 @@ export async function applyStripeEvent(
           monitor_limit: free.monitorLimit,
           stripe_subscription_id: null,
           current_period_end: null,
+          cancel_at_period_end: false,
         })
         .eq('stripe_subscription_id', sub.id)
         .select('org_id')

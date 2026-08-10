@@ -595,6 +595,7 @@ export type Database = {
         Row: {
           ai_addon: boolean
           ai_answers_included: number
+          cancel_at_period_end: boolean
           clickwrap_accepted_at: string | null
           clickwrap_terms_version: string | null
           created_at: string
@@ -611,6 +612,7 @@ export type Database = {
         Insert: {
           ai_addon?: boolean
           ai_answers_included?: number
+          cancel_at_period_end?: boolean
           clickwrap_accepted_at?: string | null
           clickwrap_terms_version?: string | null
           created_at?: string
@@ -627,6 +629,7 @@ export type Database = {
         Update: {
           ai_addon?: boolean
           ai_answers_included?: number
+          cancel_at_period_end?: boolean
           clickwrap_accepted_at?: string | null
           clickwrap_terms_version?: string | null
           created_at?: string

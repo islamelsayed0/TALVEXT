@@ -245,3 +245,54 @@ export async function setAiAddonAction(formData: FormData): Promise<void> {
   }
   redirect(`${PAGE}?addon=${enable ? 'adding' : 'removing'}`)
 }
+
+/**
+ * Schedules or unschedules cancellation at period end (the in app cancel
+ * door). Reached only through the confirmation page, which has already said
+ * what happens and when in real dates and dollars: the no single click moves
+ * money rule covers stopping and restarting money alike. The WEBHOOK remains
+ * the entitlement writer: this edit fires customer.subscription.updated,
+ * which lands cancel_at_period_end in org_billing (migration 025), and the
+ * screen shows pending until it does. Stripe's portal cancel writes the very
+ * same flag through the very same webhook, so both doors read back
+ * identically.
+ */
+export async function setCancelAtPeriodEndAction(formData: FormData): Promise<void> {
+  const viewer = await getActiveOrgViewer()
+  if (!viewer.isAdmin) redirect(PAGE)
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) redirect('/select-org')
+
+  const op = String(formData.get('ending') ?? '')
+  let failure: string | null = null
+  let done: 'scheduled' | 'resumed' | null = null
+  try {
+    if (op !== 'schedule' && op !== 'resume') {
+      throw new CheckoutValidationError('That is not a change this page can make.')
+    }
+    const entitlements = await getEntitlements(clerkOrgId)
+    if (entitlements.plan === 'free' || !entitlements.stripeSubscriptionId) {
+      throw new CheckoutValidationError(
+        'There is no subscription on this organization to change.',
+      )
+    }
+    const stripe = createStripeClient()
+    await stripe.subscriptions.update(entitlements.stripeSubscriptionId, {
+      cancel_at_period_end: op === 'schedule',
+    })
+    done = op === 'schedule' ? 'scheduled' : 'resumed'
+  } catch (err) {
+    if (err instanceof CheckoutValidationError) {
+      failure = err.message
+    } else {
+      logError('billing.cancel.failed', 'failed', { error: errorName(err) })
+      failure =
+        'The change could not be made and nothing about your plan moved. Try again in a moment; if it keeps failing, tell us on the Get Help page.'
+    }
+  }
+
+  if (failure !== null) {
+    redirect(`${PAGE}?${new URLSearchParams({ error: failure })}`)
+  }
+  redirect(`${PAGE}?ending=${done}`)
+}
