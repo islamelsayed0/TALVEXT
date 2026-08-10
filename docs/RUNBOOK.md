@@ -487,43 +487,67 @@ Neither is written in advance: this log records decisions taken, not planned.
 
 ## 8. The platform AI key
 
-`PLATFORM_ANTHROPIC_API_KEY` is the key managed AI answers run on (F13 PR 3):
-my money per request, serving orgs whose plan includes answers and who have
-no BYOK key of their own. BYOK chat never touches it.
+Managed AI answers (F13 PR 3) run on a platform key: my money per request,
+serving orgs whose plan includes answers and who have no BYOK key of their
+own. BYOK chat never touches it. The key is provider agnostic: the env
+contract is `PLATFORM_AI_PROVIDER` (`anthropic` or `openai`) plus the
+MATCHING key variable, `PLATFORM_ANTHROPIC_API_KEY` or
+`PLATFORM_OPENAI_API_KEY`. Exactly one configured pair is valid. The
+provider unset, unrecognized, or naming a provider whose key variable is
+empty all mean the managed path is off: entitled orgs see the honest
+unavailable copy and the ticket door, BYOK is unaffected, and nothing
+fails at boot.
 
 **The shape of the protection, two layers.** The database cap is the first
 layer: each org is metered against its monthly allowance by counting the
-`chat_messages` rows that are the answers, and at the cap the product refuses
-with the Get Help door. The workspace spend limit in the Anthropic console is
-the second layer, the backstop behind the cap: it bounds the SUM across all
-orgs plus anything a bug could ever leak past the per org meter. The cap
-protects each tenant's experience; the spend limit protects the bank account.
-Both exist on purpose; neither replaces the other.
+`chat_messages` rows that are the answers, and at the cap the product
+refuses with the Get Help door. The provider side limit is the second
+layer, the backstop behind the cap: it bounds the SUM across all orgs plus
+anything a bug could ever leak past the per org meter. The cap protects
+each tenant's experience; the limit protects the bank account. Both exist
+on purpose; neither replaces the other.
 
-**Setup.** Create a dedicated workspace in the Anthropic console (so the
-spend limit and the usage graphs cover exactly this product and nothing else
-you run), set a monthly spend limit you would not mind losing entirely, and
-create the key inside that workspace. Set it as `PLATFORM_ANTHROPIC_API_KEY`
-in the Vercel project. Unset means the managed path is off: entitled orgs
-see the honest unavailable copy and the ticket door, and BYOK is unaffected.
+**Setup, Anthropic.** Create a dedicated workspace in the Anthropic console
+(so the spend limit and the usage graphs cover exactly this product and
+nothing else you run), set a monthly workspace spend limit you would not
+mind losing entirely, and create the key inside that workspace. Set
+`PLATFORM_AI_PROVIDER=anthropic` and the key as
+`PLATFORM_ANTHROPIC_API_KEY` in the Vercel project.
+
+**Setup, OpenAI.** The equivalent guard rail is a dedicated project: create
+one in the OpenAI platform settings (again, this product only), set a
+monthly budget limit on the project, and create the key scoped to that
+project. Set `PLATFORM_AI_PROVIDER=openai` and the key as
+`PLATFORM_OPENAI_API_KEY` in the Vercel project.
+
+Either way, finish with a fresh build: the section 6 trap applies in full,
+a plain redeploy can reuse the old environment snapshot.
+
+**Models.** The managed path answers on its own model table,
+`PLATFORM_MODELS` in `src/lib/chat/providers.ts`, cheap tier by default and
+deliberately separate from the BYOK defaults beside it: moving the managed
+tier must never move what a customer's own key pays for, or the reverse.
 
 **What the ops events mean.**
 
 - `chat.platform_key.not_configured` (once per process): an org that paid
-  for managed answers asked while the key was unset. Configure the key or
-  expect the unavailable degrade to stay up.
-- `chat.platform_key.failed` (posted to the operator channel, name only):
-  the provider refused the key at answer time. The three usual reasons are
-  the workspace spend limit firing, rate limiting, and a revoked or invalid
-  key. Members saw the unavailable copy and the ticket door, never an error
-  page, and no retry was attempted: the send path makes exactly one attempt
-  per answer, because a retry would multiply spend against the very limit
-  that is firing.
+  for managed answers asked while no valid provider and key pair was set.
+  Fix the pair or expect the unavailable degrade to stay up.
+- `chat.platform_key.failed` (posted to the operator channel once per
+  process, name only; the log records every failure): the provider refused
+  the key at answer time. The three usual reasons are the spend or budget
+  limit firing, rate limiting, and a revoked or invalid key. Members saw
+  the unavailable copy and the ticket door, never an error page, and no
+  retry was attempted: the send path makes exactly one attempt per answer,
+  because a retry would multiply spend against the very limit that is
+  firing.
 
-**Rotation.** Create the new key in the same workspace, update
-`PLATFORM_ANTHROPIC_API_KEY` in Vercel, then push a commit or trigger a
-fresh build: the section 6 trap applies in full, a plain redeploy can reuse
-the old environment snapshot and keep answering on the old key. When the new
+**Rotation.** Create the new key in the same workspace or project, update
+the matching key variable in Vercel, then push a commit or trigger a fresh
+build (the section 6 trap again: a plain redeploy can reuse the old
+environment snapshot and keep answering on the old key). When the new
 build is live, delete the old key in the console and watch the operator
-channel: a `chat.platform_key.failed` after rotation means a stale build or
-a mispasted key.
+channel: a `chat.platform_key.failed` after rotation means a stale build
+or a mispasted key. Switching providers is the same dance with
+`PLATFORM_AI_PROVIDER` changed too; the old provider's key variable can
+then be deleted.

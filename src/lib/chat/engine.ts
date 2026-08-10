@@ -2,11 +2,7 @@ import 'server-only'
 
 import { auth } from '@clerk/nextjs/server'
 
-import {
-  MANAGED_PROVIDER,
-  platformApiKey,
-  resolveManagedAccess,
-} from '@/lib/billing/managed-ai'
+import { platformConfig, resolveManagedAccess } from '@/lib/billing/managed-ai'
 import { createAdminClient } from '@/lib/db/admin'
 import { createOrgScopedClient } from '@/lib/db/client'
 import { errorName, logError } from '@/lib/log'
@@ -14,7 +10,7 @@ import { OrgNotSyncedError } from '@/lib/db/monitors'
 import { titleFromMessage } from '@/lib/db/chat'
 import type { AiProvider } from '@/lib/db/types'
 import { readProviderKey } from './key-vault'
-import { generateReply, type ChatTurn } from './providers'
+import { generateReply, PLATFORM_MODELS, type ChatTurn } from './providers'
 import { isAiProvider } from './providers-meta'
 import { checkChatRateLimit } from './rate-limit'
 import {
@@ -241,7 +237,12 @@ export async function sendChatMessage(input: {
     if (access.mode !== 'available') {
       throw new NoProviderKeyError()
     }
-    provider = MANAGED_PROVIDER
+    const platform = platformConfig()
+    if (!platform) {
+      // Vanished between the access check and now; same honest degrade.
+      throw new ManagedUnavailableError()
+    }
+    provider = platform.provider
     keySource = 'platform'
   } else {
     throw new ProviderChoiceRequiredError(providers)
@@ -310,11 +311,11 @@ export async function sendChatMessage(input: {
 
   // Read and decrypt the key in request scope, then call the provider. Nothing
   // is written until this succeeds. The managed path uses the platform key
-  // and never touches the vault.
-  const apiKey =
-    keySource === 'platform'
-      ? platformApiKey()
-      : await readProviderKey(orgUuid, provider)
+  // and never touches the vault, and it answers on its own model table
+  // (PLATFORM_MODELS): the operator's money moves independently of what a
+  // customer's own key pays for.
+  const platform = keySource === 'platform' ? platformConfig() : null
+  const apiKey = platform ? platform.apiKey : await readProviderKey(orgUuid, provider)
   if (!apiKey) {
     // A key vanished between the provider list and now. On the platform path
     // that is the operator's configuration, not the org's admin, so it wears
@@ -329,6 +330,7 @@ export async function sendChatMessage(input: {
       generateReply({
         provider,
         apiKey,
+        ...(platform ? { model: PLATFORM_MODELS[platform.provider] } : {}),
         system: grounding.section
           ? `${SYSTEM_PROMPT}\n\n${grounding.section}`
           : SYSTEM_PROMPT,
