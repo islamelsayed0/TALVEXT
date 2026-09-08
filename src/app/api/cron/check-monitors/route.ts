@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { acquireAzureToken, queryDailyCosts } from '@/lib/azure/cost-client'
+import { acquireAzureToken, pullDailyCostEntries } from '@/lib/azure/cost-client'
 import { azurePullDue, azurePullRange, rollupDailyCosts } from '@/lib/azure/costs'
 import { readConnectionSecret } from '@/lib/azure/credential-vault'
 import { resolveEntitlements } from '@/lib/billing/entitlements'
@@ -821,7 +821,7 @@ async function runAzureCostPulls(
         clientId: connection.client_id,
         clientSecret: secret,
       })
-      const entries = await queryDailyCosts({
+      const { entries } = await pullDailyCostEntries({
         subscriptionId: connection.subscription_id,
         accessToken: token,
         from: range.from,

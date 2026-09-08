@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   acquireAzureToken,
   AzureApiError,
+  pullDailyCostEntries,
   queryDailyCosts,
 } from '@/lib/azure/cost-client'
 import {
@@ -10,6 +11,7 @@ import {
   azurePullDue,
   azurePullRange,
   parseCostQueryPage,
+  parseUsageDetailsPage,
   rollupDailyCosts,
 } from '@/lib/azure/costs'
 
@@ -124,6 +126,88 @@ describe('parseCostQueryPage: the columnar answer becomes named entries', () => 
     expect(parseCostQueryPage({ properties: { columns: [{ name: 'Weird' }], rows: [[1]] } })).toEqual([])
     expect(parseCostQueryPage(null)).toEqual([])
     expect(parseCostQueryPage('nonsense')).toEqual([])
+  })
+})
+
+describe('parseUsageDetailsPage: the fallback records become the same entries', () => {
+  it('reads the modern field spellings (observed live, 2026-09-08)', () => {
+    const entries = parseUsageDetailsPage({
+      value: [
+        {
+          kind: 'modern',
+          properties: {
+            date: '2026-09-04T00:00:00Z',
+            cost: null,
+            costInBillingCurrency: 0.12,
+            billingCurrency: null,
+            billingCurrencyCode: 'USD',
+            meterCategory: 'Virtual Network',
+          },
+        },
+      ],
+    })
+    expect(entries).toEqual([
+      { day: '2026-09-04', cost: 0.12, currency: 'USD', service: 'Virtual Network' },
+    ])
+  })
+
+  it('reads the legacy field spellings too', () => {
+    const entries = parseUsageDetailsPage({
+      value: [
+        {
+          kind: 'legacy',
+          properties: {
+            date: '2026-09-04T00:00:00Z',
+            cost: 0.64,
+            billingCurrency: 'USD',
+            meterCategory: 'Storage',
+          },
+        },
+      ],
+    })
+    expect(entries).toEqual([
+      { day: '2026-09-04', cost: 0.64, currency: 'USD', service: 'Storage' },
+    ])
+  })
+
+  it('skips malformed records and unshaped payloads without throwing', () => {
+    expect(
+      parseUsageDetailsPage({
+        value: [
+          { properties: { date: '2026-09-04T00:00:00Z' } },
+          { properties: null },
+          'garbage',
+        ],
+      }),
+    ).toEqual([])
+    expect(parseUsageDetailsPage(null)).toEqual([])
+    expect(parseUsageDetailsPage({ value: 'nope' })).toEqual([])
+  })
+
+  it('several records for one day aggregate cleanly through the rollup', () => {
+    const entries = parseUsageDetailsPage({
+      value: [
+        {
+          properties: {
+            date: '2026-09-04T00:00:00Z',
+            costInBillingCurrency: 0.12,
+            billingCurrencyCode: 'USD',
+            meterCategory: 'Virtual Network',
+          },
+        },
+        {
+          properties: {
+            date: '2026-09-04T00:00:00Z',
+            costInBillingCurrency: 0.64,
+            billingCurrencyCode: 'USD',
+            meterCategory: 'Storage',
+          },
+        },
+      ],
+    })
+    const [rollup] = rollupDailyCosts(entries)
+    expect(rollup.total_cost).toBe(0.76)
+    expect(rollup.by_service).toEqual({ Storage: 0.64, 'Virtual Network': 0.12 })
   })
 })
 
@@ -277,6 +361,62 @@ describe('the HTTP client: one attempt, safe errors, no secret anywhere', () => 
     })
     expect(entries).toHaveLength(2)
     expect(calls).toHaveLength(2)
+  })
+
+  it('pullDailyCostEntries falls to usage details on 429, and only on 429', async () => {
+    // The observed offer behavior: the Query API grants this client a
+    // permanent budget of zero while usage details answers normally.
+    stubFetch([
+      new Response('{"error":{"code":"429"}}', { status: 429 }),
+      Response.json({
+        value: [
+          {
+            properties: {
+              date: '2026-09-04T00:00:00Z',
+              costInBillingCurrency: 0.12,
+              billingCurrencyCode: 'USD',
+              meterCategory: 'Virtual Network',
+            },
+          },
+        ],
+      }),
+    ])
+    const pull = await pullDailyCostEntries({
+      subscriptionId: '11111111-aaaa-4111-8111-111111111111',
+      accessToken: 'FAKE-TOKEN',
+      from: '2026-08-01',
+      to: '2026-09-08',
+    })
+    expect(pull.source).toBe('usage_details')
+    expect(pull.entries).toHaveLength(1)
+    expect(calls).toHaveLength(2)
+    expect(calls[1].url).toContain('Microsoft.Consumption/usageDetails')
+  })
+
+  it('a 403 surfaces immediately with no second road taken', async () => {
+    stubFetch([new Response('', { status: 403 })])
+    await expectAzureFailure(
+      pullDailyCostEntries({
+        subscriptionId: '11111111-aaaa-4111-8111-111111111111',
+        accessToken: 'FAKE-TOKEN',
+        from: '2026-08-01',
+        to: '2026-09-08',
+      }),
+    )
+    expect(calls).toHaveLength(1)
+  })
+
+  it('a healthy query answers as source query in one request', async () => {
+    stubFetch([Response.json(fixturePage([[1.5, 20260908, 'Storage', 'USD']]))])
+    const pull = await pullDailyCostEntries({
+      subscriptionId: '11111111-aaaa-4111-8111-111111111111',
+      accessToken: 'FAKE-TOKEN',
+      from: '2026-08-01',
+      to: '2026-09-08',
+    })
+    expect(pull.source).toBe('query')
+    expect(pull.entries).toHaveLength(1)
+    expect(calls).toHaveLength(1)
   })
 
   it('a nextLink pointing off the management host is not followed', async () => {

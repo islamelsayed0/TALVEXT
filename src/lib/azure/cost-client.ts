@@ -3,6 +3,7 @@ import 'server-only'
 import {
   AZURE_MAX_QUERY_PAGES,
   parseCostQueryPage,
+  parseUsageDetailsPage,
   type AzureCostEntry,
 } from './costs'
 
@@ -147,4 +148,72 @@ export async function queryDailyCosts(args: {
     url = typeof next === 'string' && next.startsWith('https://management.azure.com/') ? next : null
   }
   return entries
+}
+
+/**
+ * The same window through the Consumption usage details API: one GET, paged
+ * by nextLink under the same bound. Verbose (one record per meter per
+ * resource per day) but throttled by CLIENT APP ID with a real budget, where
+ * the Query API's per client type budget is zero on some subscription
+ * offers. parseUsageDetailsPage aggregates the records back into the same
+ * entries the query would have returned.
+ */
+export async function queryUsageDetailsCosts(args: {
+  subscriptionId: string
+  accessToken: string
+  from: string
+  to: string
+}): Promise<AzureCostEntry[]> {
+  const filter = `properties/usageStart ge '${args.from}' and properties/usageEnd le '${args.to}'`
+  const firstUrl =
+    'https://management.azure.com/subscriptions/' +
+    `${encodeURIComponent(args.subscriptionId)}/providers/Microsoft.Consumption/usageDetails` +
+    `?api-version=2024-08-01&$top=1000&$filter=${encodeURIComponent(filter)}`
+
+  const entries: AzureCostEntry[] = []
+  let url: string | null = firstUrl
+  for (let page = 0; page < AZURE_MAX_QUERY_PAGES && url !== null; page++) {
+    const res: Response = await fetch(url, {
+      headers: { authorization: `Bearer ${args.accessToken}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!res.ok) throw new AzureApiError(costsErrorMessage(res.status), res.status)
+    const payload: unknown = await res.json()
+    entries.push(...parseUsageDetailsPage(payload))
+    const next = (payload as { nextLink?: unknown }).nextLink
+    url = typeof next === 'string' && next.startsWith('https://management.azure.com/') ? next : null
+  }
+  return entries
+}
+
+export type DailyCostPull = {
+  entries: AzureCostEntry[]
+  /** Which API answered; carried into the sweep's counts, never required. */
+  source: 'query' | 'usage_details'
+}
+
+/**
+ * The one entry point the pull path and the connect verification use. Tries
+ * the Cost Management Query API once; on 429, and only on 429, takes the
+ * usage details road instead. That is not a retry: it is a different API in
+ * a different throttle family, and the 429 case it exists for was observed
+ * against a real subscription (Azure for Students, 2026-09-08), where the
+ * Query API grants unrecognized client applications a permanent budget of
+ * ZERO while usage details answers normally. One attempt per API per pull,
+ * and every other failure status still surfaces immediately.
+ */
+export async function pullDailyCostEntries(args: {
+  subscriptionId: string
+  accessToken: string
+  from: string
+  to: string
+}): Promise<DailyCostPull> {
+  try {
+    return { entries: await queryDailyCosts(args), source: 'query' }
+  } catch (err) {
+    if (err instanceof AzureApiError && err.status === 429) {
+      return { entries: await queryUsageDetailsCosts(args), source: 'usage_details' }
+    }
+    throw err
+  }
 }

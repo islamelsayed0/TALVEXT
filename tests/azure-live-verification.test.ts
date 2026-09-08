@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-import { acquireAzureToken, queryDailyCosts } from '@/lib/azure/cost-client'
+import { acquireAzureToken, pullDailyCostEntries } from '@/lib/azure/cost-client'
 import { azurePullRange, rollupDailyCosts } from '@/lib/azure/costs'
 
 // LIVE MODE verification for the Azure cost pull (BRD F23 PR 1). This file
@@ -55,12 +55,15 @@ describe.skipIf(!configured)('live Azure pull against the real subscription', ()
       expect(token.length).toBeGreaterThan(0)
 
       const range = azurePullRange(Date.now())
-      const entries = await queryDailyCosts({
+      const { entries, source } = await pullDailyCostEntries({
         subscriptionId: live.subscriptionId!,
         accessToken: token,
         from: range.from,
         to: range.to,
       })
+      // Which road answered is environment dependent (the Query API budget
+      // is zero for third party clients on some offers); both are valid.
+      expect(['query', 'usage_details']).toContain(source)
 
       // The empty-proves-nothing rule: this subscription must carry real
       // spend. If this fails, the demo resource is missing or Cost

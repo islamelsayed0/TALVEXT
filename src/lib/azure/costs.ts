@@ -129,6 +129,62 @@ export function parseCostQueryPage(payload: unknown): AzureCostEntry[] {
   return entries
 }
 
+/**
+ * Reads one Consumption usage details page into the same named entries. This
+ * is the FALLBACK shape (see pullDailyCostEntries in cost-client.ts): where
+ * the Query API's per client budget is zero, the older usage details API
+ * still answers, but as one record per meter per resource per day instead of
+ * a columnar aggregate, and with two field spellings in the wild. The
+ * modern kind carries costInBillingCurrency and billingCurrencyCode; the
+ * legacy kind carries cost and billingCurrency. Both are accepted; the
+ * service bucket is the meter category, which is what the Query API's
+ * ServiceName dimension aggregates too.
+ *
+ * Malformed records are skipped, never thrown on, same as the query parser.
+ */
+export function parseUsageDetailsPage(payload: unknown): AzureCostEntry[] {
+  if (typeof payload !== 'object' || payload === null) return []
+  const { value } = payload as { value?: unknown }
+  if (!Array.isArray(value)) return []
+
+  const entries: AzureCostEntry[] = []
+  for (const record of value) {
+    if (typeof record !== 'object' || record === null) continue
+    const properties = (record as { properties?: unknown }).properties
+    if (typeof properties !== 'object' || properties === null) continue
+    const p = properties as Record<string, unknown>
+
+    const cost =
+      typeof p.costInBillingCurrency === 'number' && Number.isFinite(p.costInBillingCurrency)
+        ? p.costInBillingCurrency
+        : typeof p.cost === 'number' && Number.isFinite(p.cost)
+          ? p.cost
+          : null
+    const currency =
+      typeof p.billingCurrencyCode === 'string' && p.billingCurrencyCode.trim() !== ''
+        ? p.billingCurrencyCode
+        : typeof p.billingCurrency === 'string' && p.billingCurrency.trim() !== ''
+          ? p.billingCurrency
+          : null
+    const day =
+      typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(p.date)
+        ? p.date.slice(0, 10)
+        : null
+    if (cost === null || currency === null || day === null) continue
+
+    entries.push({
+      day,
+      cost,
+      currency,
+      service:
+        typeof p.meterCategory === 'string' && p.meterCategory.trim() !== ''
+          ? p.meterCategory
+          : 'Other',
+    })
+  }
+  return entries
+}
+
 /** 20260810 (or '20260810') to '2026-08-10'; null when it is neither. */
 function usageDateToDay(value: unknown): string | null {
   const digits =
