@@ -71,6 +71,11 @@ export type LogEvent =
   | 'cron.digest.send_failed'
   | 'cron.digest.org_failed'
   | 'cron.digest.stamp_failed'
+  // The daily Azure cost pull that rides the sweep (BRD F23). Names and
+  // statuses only; never a subscription id, a tenant id, or any credential.
+  | 'cron.azure.list_failed'
+  | 'cron.azure.stamp_failed'
+  | 'azure.pull.failed'
   // Document suggestions on the ticket form. The name only; never a draft,
   // a term, or a result.
   | 'help.suggestions.failed'

@@ -33,32 +33,48 @@ function row(overrides: Partial<OrgBillingRow>): OrgBillingRow {
 }
 
 describe('the frozen pricing matrix', () => {
-  it('matches docs/DECISIONS.md 2026-08-07 number for number', () => {
+  it('matches docs/DECISIONS.md 2026-08-07 number for number (cloudCosts added 2026-08-10)', () => {
     expect(PLAN_LIMITS.free).toEqual({
       orgLimit: 1,
       monitorLimit: 2,
       aiAnswersIncluded: 0,
       dailyDigest: false,
+      cloudCosts: false,
     })
     expect(PLAN_LIMITS.basic).toEqual({
       orgLimit: 1,
       monitorLimit: 15,
       aiAnswersIncluded: 0,
       dailyDigest: true,
+      cloudCosts: false,
     })
     expect(PLAN_LIMITS.pro).toEqual({
       orgLimit: 1,
       monitorLimit: null,
       aiAnswersIncluded: 300,
       dailyDigest: true,
+      cloudCosts: false,
     })
     expect(PLAN_LIMITS.business).toEqual({
       orgLimit: 10,
       monitorLimit: null,
       aiAnswersIncluded: 300,
       dailyDigest: true,
+      cloudCosts: true,
     })
     expect(AI_ADDON_ANSWERS).toBe(300)
+  })
+
+  it('cloud cost monitoring is Business only (BRD F23, decision log 2026-08-10)', () => {
+    expect(resolveEntitlements(row({ plan: 'business' })).cloudCosts).toBe(true)
+    expect(resolveEntitlements(row({ plan: 'pro' })).cloudCosts).toBe(false)
+    expect(resolveEntitlements(row({ plan: 'basic' })).cloudCosts).toBe(false)
+    expect(resolveEntitlements(null).cloudCosts).toBe(false)
+    // A canceled Business subscription drops to the free floor: the pull
+    // stops, the credential row stays for a future upgrade.
+    expect(
+      resolveEntitlements(row({ plan: 'business', status: 'canceled' })).cloudCosts,
+    ).toBe(false)
   })
 })
 

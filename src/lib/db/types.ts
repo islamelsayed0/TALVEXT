@@ -138,6 +138,103 @@ export type Database = {
           },
         ]
       }
+      azure_connections: {
+        Row: {
+          budget_alerted_for_month: string | null
+          client_id: string
+          created_at: string
+          created_by: string
+          credential_expires_at: string | null
+          encrypted_secret: string
+          id: string
+          last_pull_at: string | null
+          last_pull_status: string | null
+          last_success_at: string | null
+          monthly_budget: number | null
+          org_id: string
+          subscription_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          budget_alerted_for_month?: string | null
+          client_id: string
+          created_at?: string
+          created_by: string
+          credential_expires_at?: string | null
+          encrypted_secret: string
+          id?: string
+          last_pull_at?: string | null
+          last_pull_status?: string | null
+          last_success_at?: string | null
+          monthly_budget?: number | null
+          org_id: string
+          subscription_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          budget_alerted_for_month?: string | null
+          client_id?: string
+          created_at?: string
+          created_by?: string
+          credential_expires_at?: string | null
+          encrypted_secret?: string
+          id?: string
+          last_pull_at?: string | null
+          last_pull_status?: string | null
+          last_success_at?: string | null
+          monthly_budget?: number | null
+          org_id?: string
+          subscription_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "azure_connections_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      azure_daily_costs: {
+        Row: {
+          by_service: Json
+          currency: string
+          day: string
+          org_id: string
+          subscription_id: string
+          total_cost: number
+        }
+        Insert: {
+          by_service?: Json
+          currency: string
+          day: string
+          org_id: string
+          subscription_id: string
+          total_cost: number
+        }
+        Update: {
+          by_service?: Json
+          currency?: string
+          day?: string
+          org_id?: string
+          subscription_id?: string
+          total_cost?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "azure_daily_costs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_conversations: {
         Row: {
           created_at: string
@@ -1198,6 +1295,9 @@ export type AuditAction =
   | "ticket_status_changed"
   | "ticket_canceled"
   | "ticket_reopened"
+  | "azure_connected"
+  | "azure_disconnected"
+  | "azure_budget_changed"
 // Knowledge base (F14).
 export type Article = Tables<"articles">
 export type ArticleStatus = "draft" | "published"

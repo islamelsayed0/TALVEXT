@@ -39,6 +39,9 @@ export const AUDIT_ACTIONS: readonly AuditAction[] = [
   'ticket_status_changed',
   'ticket_canceled',
   'ticket_reopened',
+  'azure_connected',
+  'azure_disconnected',
+  'azure_budget_changed',
 ]
 
 const ACTION_LABELS: Record<AuditAction, string> = {
@@ -64,6 +67,9 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   ticket_status_changed: 'Ticket status changed',
   ticket_canceled: 'Ticket canceled',
   ticket_reopened: 'Ticket reopened',
+  azure_connected: 'Azure subscription connected',
+  azure_disconnected: 'Azure subscription disconnected',
+  azure_budget_changed: 'Azure budget changed',
 }
 
 /** Human label for an action. Unknown values (a newer vocabulary than this
@@ -168,6 +174,18 @@ export function auditDetailSummary(entry: {
           : ''
       const by = kind === 'member' ? 'by the requester' : kind === 'system' ? 'by Talvext' : ''
       return [move, by].filter(Boolean).join(', ')
+    }
+    // The subscription id is an identifier the connections screen already
+    // shows. The budget change carries the field name alone, never the
+    // amount: values are configuration, not audit facts (migration 026).
+    case 'azure_connected':
+    case 'azure_disconnected':
+      return detailString(entry.detail, 'subscription_id') ?? ''
+    case 'azure_budget_changed': {
+      const subscription = detailString(entry.detail, 'subscription_id')
+      const changed = changedFieldsSummary(entry.detail)
+      if (!subscription) return changed
+      return changed ? `${subscription} (${changed})` : subscription
     }
     case 'member_tags_changed': {
       const tags = detailStrings(entry.detail, 'tags')

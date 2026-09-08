@@ -51,12 +51,18 @@ export const PLAN_LIMITS: Record<
     monitorLimit: number | null
     aiAnswersIncluded: number
     dailyDigest: boolean
+    /** Azure cost monitoring (BRD F23). Business only: the feature stores a
+     * customer cloud credential, and the packaging ruling is that only the
+     * top tier ever holds one. Custom plans are sold as Business
+     * subscriptions today (the pricing page's contact us lane), so this
+     * boolean covers them too. */
+    cloudCosts: boolean
   }
 > = {
-  free: { orgLimit: 1, monitorLimit: 2, aiAnswersIncluded: 0, dailyDigest: false },
-  basic: { orgLimit: 1, monitorLimit: 15, aiAnswersIncluded: 0, dailyDigest: true },
-  pro: { orgLimit: 1, monitorLimit: null, aiAnswersIncluded: 300, dailyDigest: true },
-  business: { orgLimit: 10, monitorLimit: null, aiAnswersIncluded: 300, dailyDigest: true },
+  free: { orgLimit: 1, monitorLimit: 2, aiAnswersIncluded: 0, dailyDigest: false, cloudCosts: false },
+  basic: { orgLimit: 1, monitorLimit: 15, aiAnswersIncluded: 0, dailyDigest: true, cloudCosts: false },
+  pro: { orgLimit: 1, monitorLimit: null, aiAnswersIncluded: 300, dailyDigest: true, cloudCosts: false },
+  business: { orgLimit: 10, monitorLimit: null, aiAnswersIncluded: 300, dailyDigest: true, cloudCosts: true },
 }
 
 /**
@@ -90,6 +96,8 @@ export type Entitlements = {
   aiAnswersIncluded: number
   aiAddon: boolean
   dailyDigest: boolean
+  /** Azure cost monitoring (BRD F23), Business only. */
+  cloudCosts: boolean
   currentPeriodEnd: string | null
   /** The subscription is scheduled to end at currentPeriodEnd: access
    * continues until then, nothing more is charged, the screen says so. */
@@ -111,6 +119,7 @@ export const FREE_ENTITLEMENTS: Entitlements = {
   aiAnswersIncluded: PLAN_LIMITS.free.aiAnswersIncluded,
   aiAddon: false,
   dailyDigest: PLAN_LIMITS.free.dailyDigest,
+  cloudCosts: PLAN_LIMITS.free.cloudCosts,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
   stripeCustomerId: null,
@@ -174,6 +183,7 @@ export function resolveEntitlements(row: OrgBillingRow | null | undefined): Enti
     aiAnswersIncluded: row.ai_answers_included,
     aiAddon: row.ai_addon,
     dailyDigest: PLAN_LIMITS[row.plan].dailyDigest,
+    cloudCosts: PLAN_LIMITS[row.plan].cloudCosts,
     currentPeriodEnd: row.current_period_end,
     cancelAtPeriodEnd: row.cancel_at_period_end,
     stripeCustomerId: row.stripe_customer_id,

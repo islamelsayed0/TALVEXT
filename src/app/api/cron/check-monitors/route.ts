@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
 
+import { acquireAzureToken, pullDailyCostEntries } from '@/lib/azure/cost-client'
+import { azurePullDue, azurePullRange, rollupDailyCosts } from '@/lib/azure/costs'
+import { readConnectionSecret } from '@/lib/azure/credential-vault'
 import { resolveEntitlements } from '@/lib/billing/entitlements'
 import { createAdminClient } from '@/lib/db/admin'
 import { isLowStock } from '@/lib/db/inventory'
@@ -760,6 +763,121 @@ async function stampDigestSent(db: Db, orgId: string, today: string): Promise<vo
 }
 
 /**
+ * The daily Azure cost pull (BRD F23), riding the sweep the way the digest
+ * does: no new scheduler, no new cron entry. A connection is due once per
+ * UTC day, measured from last_pull_at, which stamps on every ATTEMPT so a
+ * failing credential costs one Azure call a day, not one per sweep. Each
+ * pull is one token request and one Cost Management query, one attempt, no
+ * retries (the platform key resilience rule); a failure stamps
+ * last_pull_status and is swallowed, because a tenant's expired credential
+ * must never fail the sweep and is never an incident. The org's admin sees
+ * the truth on the cloud costs screen, not a fake zero.
+ *
+ * The entitlement gate runs BEFORE any Azure call (the digest construction):
+ * cloud cost monitoring is Business only, and a lapsed plan stops spending
+ * Azure quota immediately. The credential row itself stays, so upgrading
+ * again resumes pulls without a reconnect.
+ */
+async function runAzureCostPulls(
+  db: Db,
+  nowMs: number,
+): Promise<{ due: number; pulled: number; failed: number }> {
+  const counts = { due: 0, pulled: 0, failed: 0 }
+
+  const { data: rows, error } = await db
+    .from('azure_connections')
+    .select('id, org_id, subscription_id, tenant_id, client_id, last_pull_at')
+  if (error) {
+    logError('cron.azure.list_failed', 'failed', { error: error.message })
+    return counts
+  }
+  const due = (rows ?? []).filter((row) => azurePullDue(row.last_pull_at, nowMs))
+  if (due.length === 0) return counts
+
+  const { data: billingRows, error: billingError } = await db
+    .from('org_billing')
+    .select('*')
+    .in('org_id', [...new Set(due.map((row) => row.org_id))])
+  if (billingError) {
+    logError('cron.azure.list_failed', 'failed', { error: billingError.message })
+    return counts
+  }
+  const billingByOrg = new Map((billingRows ?? []).map((b) => [b.org_id, b]))
+  const entitled = due.filter(
+    (row) => resolveEntitlements(billingByOrg.get(row.org_id)).cloudCosts,
+  )
+
+  const range = azurePullRange(nowMs)
+  for (const connection of entitled) {
+    counts.due++
+    const attemptedAt = new Date().toISOString()
+    try {
+      const secret = await readConnectionSecret(connection.id)
+      // Disconnected between the list and the pull: nothing to do, and
+      // nothing to stamp on a row that no longer exists.
+      if (secret === null) continue
+      const token = await acquireAzureToken({
+        tenantId: connection.tenant_id,
+        clientId: connection.client_id,
+        clientSecret: secret,
+      })
+      const { entries } = await pullDailyCostEntries({
+        subscriptionId: connection.subscription_id,
+        accessToken: token,
+        from: range.from,
+        to: range.to,
+      })
+      const rollups = rollupDailyCosts(entries).map((rollup) => ({
+        org_id: connection.org_id,
+        subscription_id: connection.subscription_id,
+        ...rollup,
+      }))
+      // Zero rows is a legitimate answer (a brand new subscription with no
+      // spend yet); the pull still succeeded and stamps as ok.
+      if (rollups.length > 0) {
+        const { error: upsertError } = await db
+          .from('azure_daily_costs')
+          .upsert(rollups, { onConflict: 'org_id,subscription_id,day' })
+        if (upsertError) throw new Error(upsertError.message)
+      }
+      await stampAzurePull(db, connection.id, {
+        last_pull_at: attemptedAt,
+        last_pull_status: 'ok',
+        last_success_at: attemptedAt,
+      })
+      counts.pulled++
+    } catch (err) {
+      // Swallowed on purpose: one connection's refusal affects no other
+      // connection and never the sweep. Name only, never a tenant or
+      // subscription identifier (the log.ts rule).
+      counts.failed++
+      logError('azure.pull.failed', 'failed', { error: errorName(err) })
+      await stampAzurePull(db, connection.id, {
+        last_pull_at: attemptedAt,
+        last_pull_status: 'failed',
+      })
+    }
+  }
+  return counts
+}
+
+/** The pull ledger write. Service role only; no user session holds a write
+ * grant on any of these columns (migration 026). */
+async function stampAzurePull(
+  db: Db,
+  connectionId: string,
+  columns: { last_pull_at: string; last_pull_status: 'ok' | 'failed'; last_success_at?: string },
+): Promise<void> {
+  const { error } = await db
+    .from('azure_connections')
+    .update(columns)
+    .eq('id', connectionId)
+  if (error) {
+    logError('cron.azure.stamp_failed', 'failed', { error: error.message })
+  }
+}
+
+/**
  * The origin to build dashboard links from, taken from the request the
  * scheduler made, the same way the status page settings screen derives the
  * public status URL. The route is bearer token protected, so the only caller
@@ -1091,6 +1209,11 @@ async function runSweep(request: Request) {
   // it can never fail the sweep. Its own errors are counted and logged inside.
   const digests = await runDailyDigests(db, now, requestBaseUrl(request))
 
+  // The daily Azure cost pull (BRD F23). Same posture as the digest: rides
+  // the sweep, cannot fail it, and a tenant's refused credential is that
+  // org's staleness banner, never the operator's page.
+  const azure = await runAzureCostPulls(db, now)
+
   if (failures.length > 0) {
     // Reported to the operator channel: this is the platform failing, not one
     // org's configuration, and it is the aggregate rather than the per org
@@ -1121,6 +1244,9 @@ async function runSweep(request: Request) {
     digests_sent: digests.sent,
     digests_quiet: digests.quiet,
     digests_failed: digests.failed,
+    azure_due: azure.due,
+    azure_pulled: azure.pulled,
+    azure_failed: azure.failed,
   })
 
   return NextResponse.json({
@@ -1130,6 +1256,7 @@ async function runSweep(request: Request) {
     down,
     incidents: incidentCounts,
     digests,
+    azure,
     failures: failures.length,
   })
 }

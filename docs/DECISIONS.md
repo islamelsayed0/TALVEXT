@@ -6,6 +6,57 @@ future work; do not log routine implementation details.
 
 ---
 
+## 2026-08-10 — Azure cost monitoring stores the first customer cloud credential, under the full BYOK posture
+
+**Decided.** Azure cost monitoring (BRD F23, pulled forward from Phase 3)
+connects a customer subscription through a service principal the admin mints
+with one Azure CLI command, scoped to Cost Management Reader and nothing
+wider. The client secret goes into the existing AES vault exactly like a
+BYOK key: encrypted in the application layer before it reaches Postgres,
+ciphertext withheld from the authenticated SELECT grant, decrypted only in
+one service role module (src/lib/azure/credential-vault.ts, on the admin.ts
+allowlist), never readable back through any surface, never logged. A
+multi tenant OAuth connect button is deliberately not built; it is recorded
+in docs/future_update.md as the someday upgrade.
+
+**Decided: writes.** Connect, reconnect, and the monthly budget are
+authenticated admin writes through RLS with column grants, the migration 007
+idiom, so the audit triggers record the acting admin. The pull ledgers
+(last_pull_at, last_pull_status, last_success_at) and the budget alert dedup
+stamp (budget_alerted_for_month) hold no authenticated write grant at all,
+the migration 017/020 posture: the sweep is their only writer, and an org
+cannot forge freshness or replay an alert. Rollups (azure_daily_costs) are
+service role written, admin read, and deliberately carry no foreign key to
+the connection row: disconnecting deletes the credential and keeps the cost
+history.
+
+**Decided: the pull.** One attempt per subscription per UTC day, riding the
+five minute sweep behind a last_pull_at due check; no new scheduler, no new
+cron entry (the digest precedent). One token request plus one Cost
+Management query per pull, no retries (the platform key resilience rule); a
+failure stamps the ledger, shows as an honest staleness banner, and is never
+an incident and never fails the sweep. The window re-covers the previous
+month through today on every pull because Azure restates recent days as
+metering settles; the rollup upsert is idempotent for the same reason. Reads
+are admin only, both tables: spend is money data, scoped like billing, not
+like uptime.
+
+**Decided: packaging.** The feature is Business tier, expressed as a
+cloudCosts boolean on the frozen plan matrix. There is no custom plan in the
+resolver; Custom is sold as a Business subscription (the pricing page's
+contact lane), so the boolean covers it. Free and Basic never store a cloud
+credential: the connect action refuses before any write, and the sweep's
+entitlement gate stops pulling the moment a plan lapses while leaving the
+credential row intact.
+
+**Affects.** Any future cloud provider port (AWS, GCP) inherits this shape
+wholesale: the same vault, the same ledger posture, the same one pull a day,
+the same disconnect-keeps-history rule. The audit vocabulary grew
+azure_connected, azure_disconnected, azure_budget_changed, with the budget
+amount never in the detail.
+
+---
+
 ## 2026-08-07 — No single click moves money: the add on change confirms first, with Stripe's own numbers
 
 **Decided.** The add on button on the billing screen is a link, not a
